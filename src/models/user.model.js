@@ -1,6 +1,7 @@
 import mongoose,{ Schema } from 'mongoose';
 import mongooseAggregatePaginate from 'mongoose-aggregate-paginate-v2';
-import bcrypt from 'bcrypt';    
+import bcrypt from 'bcrypt'; 
+import jwt from 'jsonwebtoken';   
 
 const userSchema = new mongoose.Schema(
     {
@@ -55,8 +56,8 @@ userSchema.pre("save", async function(next) {
     next();    
 })
 
-userSchema.methods.isPasswordCoorrect = async function (password){
-    await bcrypt.compare(password, this.password);
+userSchema.methods.isPasswordCorrect = async function (password){
+    return await bcrypt.compare(password, this.password);
 }
 
 userSchema.methods.generateAccessToken = function(){

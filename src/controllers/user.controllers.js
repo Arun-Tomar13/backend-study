@@ -7,18 +7,25 @@ import { ApiResponse } from '../utils/apiResponse.js';
 const genearteAccessAndRefreshToken = async (userId)=>{
   
   try{
+    // console.log(userId);
+    
   const user = await User.findById(userId);
-  const accessToken = user.generateAccessToken();
-  const refreshToken = user.generateRefreshToken();
+
+  console.log(user.generateRefreshToken());
+  
+  const accessToken =  user.generateAccessToken();
+  console.log(accessToken);
+  const refreshToken =  user.generateRefreshToken();
+  console.log(refreshToken);
 
   user.refreshToken = refreshToken;
-  user.save({validateBeforeSave: false});
+  await user.save({ validateBeforeSave: false })
 
   return {accessToken,refreshToken};
 
   }
   catch(error){
-    throw new ApiError(500, "something went wrong while generating Acess and refresh tokens");
+    throw new ApiError(500, error.message);
   }
   
 
@@ -30,7 +37,7 @@ const registerUser = asynchandler( async (req, res)=>{
   // console.log("email: ",email);
 
   if(
-    [fullName,username, email, password].some((field)=> field?.trim === "")
+    [fullName,username, email, password].some((field)=> field?.trim() === "")
   ){
     throw new ApiError(400,"All fieds are required");
   }
@@ -77,7 +84,7 @@ const registerUser = asynchandler( async (req, res)=>{
   const createdUser = await User.findById(user._id).select("-password -refreshToken");
 
   if(!createdUser){
-    throw new ApiError(500," somthing went wrong while registering user");
+    throw new ApiError(500," something went wrong while registering user");
   }
 
   return res.status(201).json(
@@ -102,7 +109,9 @@ const loginUser = asynchandler( async (req,res)=>{
     throw new ApiError(404,"User does not exists");
   }
 
-  const isPasswordValid = await user.isPasswordValid(password);
+  const isPasswordValid = await user.isPasswordCorrect(password);
+  // console.log(isPasswordValid);
+  
 
   if(!isPasswordValid){
     throw new ApiError(404,"invalid user credentials");
