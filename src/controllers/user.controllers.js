@@ -3,9 +3,10 @@ import {ApiError} from "../utils/apiError.js";
 import {User} from "../models/user.model.js";
 import {uploadCloudinary} from "../utils/cloudinary.js";
 import { ApiResponse } from '../utils/apiResponse.js';
-import jwt from "jsonwebtoken"
+import jwt from "jsonwebtoken";
+import mongoose from 'mongoose';
 
-const genearteAccessAndRefreshToken = async (userId)=>{
+const generateAccessAndRefreshToken = async (userId)=>{
   
   try{
     // console.log(userId);
@@ -17,7 +18,7 @@ const genearteAccessAndRefreshToken = async (userId)=>{
   const accessToken =  user.generateAccessToken();
   // console.log(accessToken);
   const refreshToken =  user.generateRefreshToken();
-  // console.log(refreshToken);
+  // console.log(newrefreshToken);
 
   user.refreshToken = refreshToken;
   await user.save({ validateBeforeSave: false })
@@ -26,11 +27,16 @@ const genearteAccessAndRefreshToken = async (userId)=>{
 
   }
   catch(error){
-    throw new ApiError(500, error.message);
+    throw new ApiError(500, "arun");
   }
   
 
 }
+
+const deletPrevfile = async (filepath)=>{
+  fs.unlinkSync(filepath);
+}
+
 
 const registerUser = asynchandler( async (req, res)=>{
   
@@ -118,7 +124,9 @@ const loginUser = asynchandler( async (req,res)=>{
     throw new ApiError(404,"invalid user credentials");
   }
 
-  const {accessToken,refreshToken} = await genearteAccessAndRefreshToken(user._id);
+  const {accessToken,refreshToken} = await generateAccessAndRefreshToken(user._id);
+  console.log(refreshToken);
+  
 
   const LoggedInUser = await User.findById(user._id).select("-password -refreshToken");
 
@@ -146,8 +154,8 @@ const logoutUser = asynchandler ( async(req,res)=>{
   await User.findByIdAndUpdate(
     req.user?._id,
     {
-      $set: {
-        refreshToken: undefined
+      $unset: {
+        refreshToken: 1
       }
     },
     {
@@ -164,12 +172,17 @@ const logoutUser = asynchandler ( async(req,res)=>{
   .status(200)
   .clearCookie("accessToken",options)  
   .clearCookie("refreshToken",options)  
-  .json(201,{},"User logged Out succesfully")
+  .json(
+    new ApiResponse(201,{},"User logged Out succesfully")
+  )
 
 })
 
 const refreshAccessToken = asynchandler( async (req,res)=>{
   const incommingRefreshToken = req.cookies.refreshToken || req.body.refreshToken
+
+  console.log(incommingRefreshToken);
+  
 
   if(!incommingRefreshToken){
     throw new ApiError(401,"Unauthorized request");
@@ -177,6 +190,7 @@ const refreshAccessToken = asynchandler( async (req,res)=>{
 
   try {
     const decodedToken = jwt.verify(incommingRefreshToken,process.env.REFRESH_TOKEN_SECRET);
+    console.log(decodedToken)
   
     const user = await User.findById(decodedToken?._id);
   
@@ -193,16 +207,18 @@ const refreshAccessToken = asynchandler( async (req,res)=>{
       secure:true
     }
   
-    const {accessToken,newRefreshToken} = await genearteAccessAndRefreshToken(user._id)
+    const {accessToken,refreshToken} = await generateAccessAndRefreshToken(user._id)
+    // console.log(ne);
+    
   
     return res
     .status(200)
     .cookie("accessToken",accessToken,options)
-    .cookie("refreshToken",newRefreshToken,options)
+    .cookie("refreshToken",refreshToken,options)
     .json(
       new ApiResponse(
         200,
-        {accessToken,refreshToken:newRefreshToken},
+        {accessToken,refreshToken},
         "acces Token renewed"
       )
     )
@@ -268,9 +284,9 @@ const updateAccountDetails = asynchandler(async(req,res)=>{
   return res
   .status(200)
   .json(
-    200,
+   new ApiResponse( 200,
     user,
-    "Account updated succesfully"
+    "Account updated succesfully")
   )
 
 })
@@ -283,6 +299,8 @@ const updateUserAvatar = asynchandler( async(req,res)=>{
   }
 
   const avatar = await uploadCloudinary(avatarLocalPath);
+
+  await deletPrevfile(avatarLocalPath);
 
   if(!avatar.url){
     throw new ApiError(400,"something went wrong while uploading avatar file ")
@@ -305,6 +323,7 @@ const updateUserAvatar = asynchandler( async(req,res)=>{
     )
 
 })
+
 const updateUserCoverImage = asynchandler( async(req,res)=>{
   const coverImageLocalPath = req.file?.path;
 
@@ -313,6 +332,8 @@ const updateUserCoverImage = asynchandler( async(req,res)=>{
   }
 
   const coverImage = await uploadCloudinary(coverImageLocalPath);
+
+  await deletPrevfile(coverImageLocalPath);
 
   if(!coverImage.url){
     throw new ApiError(400,"something went wrong while uploading coverImage file ")
@@ -341,6 +362,138 @@ const updateUserCoverImage = asynchandler( async(req,res)=>{
 
 })
 
+const getUserChannelProfile = asynchandler(async(req,res)=>{
+  const {username} = req.params;
+
+  if(!username){
+    throw new ApiError(400,"username is not present ");
+  }
+
+  const channel = await User.aggregate([
+    {
+      $match:{
+        username:username?.toLowerCase()
+      }
+    },
+    {
+      $lookup:{
+        from:"subscriptions",
+        localField:"_id",
+        foreignField:"channel",
+        as: "subscribers"
+      }
+    },
+    {
+      $lookup:{
+        from:"subscriptions",
+        localField:"_id",
+        foreignField:"subscriber",
+        as:"subscribedTo"
+      }
+    },
+    {
+      $addFields:{
+        subscribersCount:{
+          $size:"$subscribers"
+        },
+        channelsSubscribedToCount:{
+          $size:"$subscribedTo"
+        },
+        isSubscribed:{
+          $cond:{
+            if:{ $in: [req.user?._id,"$subscribers.subscriber"]},
+            then:true,
+            else:false
+          }
+        }
+      }
+    },
+    {
+      $project:{
+        fullName:1,
+        username:1,
+        subscribersCount:1,
+        channelsSubscribedToCount:1,
+        isSubscribed:1,
+        email:1,
+        avatar:1,
+        coverImage:1
+      }
+
+    }
+  ])
+
+  if(!channel?.length){
+    throw new ApiError(404,"channels does not exits")
+  }
+
+  return res
+  .status(200)
+  .json(
+    new ApiResponse(
+      200,
+      channel[0],
+      "user channel fetched succesfully"
+    )
+  )
+
+})
+
+const getWatchHistory = asynchandler( async (req,res)=>{
+  const user = await User.aggregate([
+    {
+      $match:{
+        _id: new mongoose.Types.ObjectId(req.user._id)
+      }
+    },
+    {
+      $lookup:{
+        from:"videos",
+        localField:"watchHistory",
+        foreignField:"_id",
+        as:"watchHistory",
+        pipeline:[
+          {
+            $lookup:{
+              from:"users",
+              localField:"owner",
+              foreignField:"_id",
+              as:"owner",
+              pipeline:[
+                {
+                  $project:{
+                    fullName:1,
+                    username:1,
+                    avatar:1
+                  }
+                }
+              ]
+            }
+          },
+          {
+            $addFields:{
+              owner:{
+                $first:"$owner"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ])
+
+  return res
+  .status(200)
+  .json(
+    new ApiResponse(
+      200,
+      user[0].watchHistory,
+      "watch History fetched succesfully"
+      
+    )
+  )
+})
+
 export {
   registerUser,
   loginUser,
@@ -350,5 +503,7 @@ export {
   getCurrenctUser,
   updateAccountDetails,
   updateUserAvatar,
-  updateUserCoverImage
+  updateUserCoverImage,
+  getUserChannelProfile,
+  getWatchHistory
 };
